@@ -16,6 +16,8 @@ STATE="${OPENCLAW_STATE:-${USER_HOME}/.openclaw}"
 AUTH="${OPENCLAW_AUTH:-${USER_HOME}/.openclaw-auth-profile-secrets}"
 CONTROL="${OPENCLAW_CONTROL_CENTER:-${USER_HOME}/.local/share/cockpit/openclaw_control_center}"
 GATEWAY="${OPENCLAW_GATEWAY:-src-openclaw-gateway-1}"
+BACKUP_ROOT="${MBC_BACKUP_ROOT:-${USER_HOME}/ia-server-backups}"
+SAFETY_ROOT="${OPENCLAW_SAFETY_ROOT:-${BACKUP_ROOT}/openclaw-safety}"
 CONFIRM="${OPENCLAW_RESTORE_CONFIRM:-}"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -105,6 +107,11 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 4
 fi
 
+if ! command -v rsync >/dev/null 2>&1; then
+    echo "ERROR: rsync is not available"
+    exit 4
+fi
+
 if ! docker compose version >/dev/null 2>&1; then
     echo "ERROR: docker compose is not available"
     exit 4
@@ -131,17 +138,122 @@ if [ "$CONFIRM" != "RESTORE" ]; then
     exit 5
 fi
 
+STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
+SAFETY_DIR="${SAFETY_ROOT}/openclaw_pre_restore_${STAMP}"
 GATEWAY_WAS_RUNNING=0
 RESTORE_COMPLETED=0
+SAFETY_READY=0
+CURRENT_IMAGE_ID="$(docker inspect -f '{{.Image}}' "$GATEWAY" 2>/dev/null || true)"
+CURRENT_IMAGE_REF="$(docker inspect -f '{{.Config.Image}}' "$GATEWAY" 2>/dev/null || true)"
 
-cleanup() {
-    if [ "$RESTORE_COMPLETED" -ne 1 ] && [ "$GATEWAY_WAS_RUNNING" -eq 1 ]; then
+if docker inspect -f '{{.State.Running}}' "$GATEWAY" 2>/dev/null | grep -qx true; then
+    GATEWAY_WAS_RUNNING=1
+fi
+
+restore_deployment_from_safety() {
+    if [ ! -d "$SAFETY_DIR/deployment" ]; then
+        return
+    fi
+
+    while IFS= read -r -d '' saved_file; do
+        rel="${saved_file#"$SAFETY_DIR/deployment/"}"
+        install -d -m 0755 -o "$IA_USER" -g "$IA_USER" "$(dirname "$SRC/$rel")"
+        cp -a "$saved_file" "$SRC/$rel"
+    done < <(find "$SAFETY_DIR/deployment" -type f -print0)
+
+    if [ -f "$SAFETY_DIR/metadata/deployment-originally-missing.txt" ]; then
+        while IFS= read -r rel; do
+            [ -n "$rel" ] && rm -f "$SRC/$rel"
+        done < "$SAFETY_DIR/metadata/deployment-originally-missing.txt"
+    fi
+}
+
+rollback_restore() {
+    echo "ROLLBACK: restoring pre-restore safety snapshot..." >&2
+
+    if docker inspect -f '{{.State.Running}}' "$GATEWAY" 2>/dev/null | grep -qx true; then
+        docker stop "$GATEWAY" >/dev/null 2>&1 || true
+    fi
+
+    install -d -m 0700 -o "$IA_USER" -g "$IA_USER" "$STATE" "$AUTH"
+    rsync -aAXH --numeric-ids --delete "$SAFETY_DIR/state/" "$STATE/" || true
+    rsync -aAXH --numeric-ids --delete "$SAFETY_DIR/auth-profile-secrets/" "$AUTH/" || true
+    restore_deployment_from_safety || true
+
+    if [ -d "$SAFETY_DIR/control-center" ]; then
+        install -d -m 0755 -o "$IA_USER" -g "$IA_USER" "$CONTROL"
+        rsync -aAXH --numeric-ids --delete "$SAFETY_DIR/control-center/" "$CONTROL/" || true
+    fi
+
+    if [ -n "$CURRENT_IMAGE_ID" ] && [ -n "$CURRENT_IMAGE_REF" ]; then
+        docker tag "$CURRENT_IMAGE_ID" "$CURRENT_IMAGE_REF" >/dev/null 2>&1 || true
+    fi
+
+    if [ "$GATEWAY_WAS_RUNNING" -eq 1 ]; then
         docker compose --env-file "$SRC/.env" -f "$SRC/docker-compose.yml" up -d --no-build openclaw-gateway >/dev/null 2>&1 || true
     fi
+
+    echo "ROLLBACK: safety snapshot retained at $SAFETY_DIR" >&2
+}
+
+cleanup() {
+    status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ] && [ "$SAFETY_READY" -eq 1 ] && [ "$RESTORE_COMPLETED" -ne 1 ]; then
+        rollback_restore
+    elif [ "$status" -ne 0 ] && [ "$GATEWAY_WAS_RUNNING" -eq 1 ]; then
+        docker compose --env-file "$SRC/.env" -f "$SRC/docker-compose.yml" up -d --no-build openclaw-gateway >/dev/null 2>&1 || true
+    fi
+    exit "$status"
 }
 trap cleanup EXIT
 
-echo "[4/9] Loading exact Docker image from backup..."
+echo "[4/11] Capturing current OpenClaw runtime metadata..."
+echo "Current image ID:  ${CURRENT_IMAGE_ID:-unknown}"
+echo "Current image ref: ${CURRENT_IMAGE_REF:-unknown}"
+
+if [ "$GATEWAY_WAS_RUNNING" -eq 1 ]; then
+    echo "[5/11] Stopping OpenClaw gateway for a consistent safety snapshot..."
+    docker stop "$GATEWAY" >/dev/null
+else
+    echo "[5/11] OpenClaw gateway already stopped or absent."
+fi
+
+echo "[6/11] Creating pre-restore safety snapshot..."
+install -d -m 0700 -o "$IA_USER" -g "$IA_USER" "$SAFETY_ROOT" "$SAFETY_DIR"
+mkdir -p "$SAFETY_DIR/state" "$SAFETY_DIR/auth-profile-secrets" "$SAFETY_DIR/deployment" "$SAFETY_DIR/metadata"
+
+rsync -aAXH --numeric-ids "$STATE/" "$SAFETY_DIR/state/"
+rsync -aAXH --numeric-ids "$AUTH/" "$SAFETY_DIR/auth-profile-secrets/"
+
+: > "$SAFETY_DIR/metadata/deployment-originally-missing.txt"
+while IFS= read -r -d '' backup_file; do
+    rel="${backup_file#"$BACKUP_DIR/deployment/"}"
+    if [ -f "$SRC/$rel" ]; then
+        install -d -m 0700 "$(dirname "$SAFETY_DIR/deployment/$rel")"
+        cp -a "$SRC/$rel" "$SAFETY_DIR/deployment/$rel"
+    else
+        printf '%s\n' "$rel" >> "$SAFETY_DIR/metadata/deployment-originally-missing.txt"
+    fi
+done < <(find "$BACKUP_DIR/deployment" -type f -print0)
+
+if [ -d "$CONTROL" ]; then
+    mkdir -p "$SAFETY_DIR/control-center"
+    rsync -aAXH --numeric-ids "$CONTROL/" "$SAFETY_DIR/control-center/"
+fi
+
+{
+    echo "Created: $(date --iso-8601=seconds)"
+    echo "Gateway was running: $GATEWAY_WAS_RUNNING"
+    echo "Image ID: $CURRENT_IMAGE_ID"
+    echo "Image ref: $CURRENT_IMAGE_REF"
+    echo "Restore source: $BACKUP_DIR"
+} > "$SAFETY_DIR/metadata/safety-manifest.txt"
+
+SAFETY_READY=1
+echo "Safety snapshot: $SAFETY_DIR"
+
+echo "[7/11] Loading exact Docker image from backup..."
 LOAD_OUTPUT="$(gzip -dc "$IMAGE_ARCHIVE" | docker load)"
 echo "$LOAD_OUTPUT"
 LOADED_IMAGE_ID="$(printf '%s\n' "$LOAD_OUTPUT" | sed -n 's/^Loaded image ID: //p' | tail -n 1)"
@@ -153,18 +265,10 @@ if [ "$LOADED_IMAGE_ID" != "$EXPECTED_IMAGE_ID" ]; then
     exit 6
 fi
 
-echo "[5/9] Applying backed-up Docker image reference..."
+echo "[8/11] Applying backed-up Docker image reference..."
 docker tag "$LOADED_IMAGE_ID" "$IMAGE_REF"
 
-if docker inspect -f '{{.State.Running}}' "$GATEWAY" 2>/dev/null | grep -qx true; then
-    GATEWAY_WAS_RUNNING=1
-    echo "[6/9] Stopping OpenClaw gateway..."
-    docker stop "$GATEWAY" >/dev/null
-else
-    echo "[6/9] OpenClaw gateway already stopped or absent."
-fi
-
-echo "[7/9] Restoring OpenClaw data and deployment..."
+echo "[9/11] Restoring OpenClaw data and deployment..."
 install -d -m 0700 -o "$IA_USER" -g "$IA_USER" "$STATE"
 install -d -m 0700 -o "$IA_USER" -g "$IA_USER" "$AUTH"
 install -d -m 0755 -o "$IA_USER" -g "$IA_USER" "$SRC"
@@ -178,17 +282,18 @@ if [ -d "$BACKUP_DIR/control-center" ]; then
     rsync -aAXH --numeric-ids --delete "$BACKUP_DIR/control-center/" "$CONTROL/"
 fi
 
-echo "[8/9] Starting OpenClaw with the restored image and deployment..."
+echo "[10/11] Starting OpenClaw with the restored image and deployment..."
 docker compose --env-file "$SRC/.env" -f "$SRC/docker-compose.yml" up -d --no-build openclaw-gateway >/dev/null
 
 for _ in $(seq 1 30); do
     STATUS="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$GATEWAY" 2>/dev/null || true)"
     if [ "$STATUS" = "healthy" ] || [ "$STATUS" = "running" ]; then
         RESTORE_COMPLETED=1
-        echo "[9/9] OPENCLAW RESTORE OK"
+        echo "[11/11] OPENCLAW RESTORE OK"
         echo "Gateway: $GATEWAY"
         echo "Status:  $STATUS"
         echo "Image:   $LOADED_IMAGE_ID"
+        echo "Safety:  $SAFETY_DIR"
         exit 0
     fi
     if [ "$STATUS" = "unhealthy" ] || [ "$STATUS" = "exited" ] || [ "$STATUS" = "dead" ]; then
