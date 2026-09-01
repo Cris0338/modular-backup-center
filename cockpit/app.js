@@ -52,6 +52,33 @@
     return module.status || "Unknown";
   }
 
+  async function verifyModule(module, button) {
+    clearNotice();
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "Verifying…";
+
+    try {
+      const output = await cockpit.spawn(
+        ["/usr/local/lib/modular-backup-center/mbcctl", "verify", module.backup_key],
+        { superuser: "try", err: "message" }
+      );
+      const result = JSON.parse(output);
+      if (!result.ok) {
+        throw new Error(result.error || "Verification failed");
+      }
+      showNotice(
+        `${module.name}: ${result.backup} verified successfully (${result.checked_files} checksum entries).`,
+        "success"
+      );
+    } catch (error) {
+      showNotice(`${module.name}: verification failed — ${error}`, "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+
   function renderModule(module) {
     const fragment = template.content.cloneNode(true);
     const card = fragment.querySelector(".module-card");
@@ -79,7 +106,14 @@
     fragment.querySelectorAll("[data-action]").forEach((button) => {
       const action = button.dataset.action;
       button.addEventListener("click", () => {
-        showNotice(`${action[0].toUpperCase()}${action.slice(1)} for ${module.name} is not wired yet. Discovery UI is active.`, "info");
+        if (action === "verify") {
+          verifyModule(module, button);
+          return;
+        }
+        showNotice(
+          `${action[0].toUpperCase()}${action.slice(1)} for ${module.name} is not wired yet.`,
+          "info"
+        );
       });
     });
 
