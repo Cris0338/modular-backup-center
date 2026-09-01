@@ -69,6 +69,20 @@
     </article>
   </template>
 
+  <dialog id="action-modal" class="action-modal" aria-labelledby="action-modal-title">
+    <div class="modal-header">
+      <div>
+        <p id="action-modal-kicker" class="modal-kicker">Modular Backup Center</p>
+        <h2 id="action-modal-title">Result</h2>
+      </div>
+      <button id="action-modal-x" class="modal-x" type="button" aria-label="Close">×</button>
+    </div>
+    <div id="action-modal-body" class="modal-body"></div>
+    <div class="modal-actions">
+      <button id="action-modal-close" class="secondary-button" type="button">Close</button>
+    </div>
+  </dialog>
+
   <script src="app.js"></script>
 </body>
 </html>
