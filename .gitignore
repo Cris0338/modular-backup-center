@@ -1,0 +1,67 @@
+# Modular Backup Center - never commit real backup data or secrets
+
+# Backup archives and exports
+backups/
+exports/
+restore-tests/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.img
+*.iso
+*.dump
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+
+# Docker image exports
+*-image.tar
+*-image.tar.gz
+*-images.tar
+*-images.tar.gz
+
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.token
+*secret*
+*credentials*
+*auth-profile*
+
+# Runtime / generated state
+state/
+cache/
+tmp/
+logs/
+*.log
+*.pid
+*.lock
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local development overrides
+config.local.*
+*.local.json
