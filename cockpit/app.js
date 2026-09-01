@@ -70,6 +70,19 @@
     return module.status || "Unknown";
   }
 
+  function actionAvailable(module, action) {
+    if ((module.capabilities || []).includes(action)) return true;
+
+    // Known adapters may intentionally be root-only (for example 0750 backup
+    // engines). Discovery runs unprivileged, while destructive/write actions
+    // are executed through Cockpit with superuser:"require".
+    if (action === "backup" && module.adapter && module.adapter !== "generic") {
+      return true;
+    }
+
+    return false;
+  }
+
   async function verifyModule(module, button) {
     clearNotice();
     const originalText = button.textContent;
@@ -170,7 +183,7 @@
 
     fragment.querySelectorAll("[data-action]").forEach((button) => {
       const action = button.dataset.action;
-      const available = (module.capabilities || []).includes(action);
+      const available = actionAvailable(module, action);
       if (!available) {
         button.disabled = true;
         button.title = `${action} is not available for this module yet`;
