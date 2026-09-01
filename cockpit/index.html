@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Modular Backup Center</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="../base1/cockpit.js"></script>
+</head>
+<body>
+  <main class="page-shell">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Backup & Recovery</p>
+        <h1>Modular Backup Center</h1>
+        <p class="subtitle">SYSTEM + automatically discovered Docker modules</p>
+      </div>
+      <button id="refresh-button" class="secondary-button" type="button">Refresh</button>
+    </header>
+
+    <section id="notice" class="notice" hidden></section>
+
+    <section class="summary-bar" aria-label="Backup Center summary">
+      <div><span class="summary-label">Modules</span><strong id="module-count">—</strong></div>
+      <div><span class="summary-label">Running</span><strong id="running-count">—</strong></div>
+      <div><span class="summary-label">Backup root</span><strong id="backup-root">—</strong></div>
+    </section>
+
+    <section>
+      <div id="module-grid" class="module-grid" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <template id="module-card-template">
+    <article class="module-card">
+      <div class="card-topline">
+        <div>
+          <span class="module-type"></span>
+          <h2 class="module-name"></h2>
+        </div>
+        <span class="status-pill"></span>
+      </div>
+
+      <div class="module-meta">
+        <div>
+          <span class="meta-label">Last backup</span>
+          <strong class="last-backup">Never</strong>
+        </div>
+        <div>
+          <span class="meta-label">Size</span>
+          <strong class="backup-size">—</strong>
+        </div>
+        <div>
+          <span class="meta-label">Integrity</span>
+          <strong class="integrity">—</strong>
+        </div>
+        <div>
+          <span class="meta-label">Containers</span>
+          <strong class="container-count">—</strong>
+        </div>
+      </div>
+
+      <div class="card-actions">
+        <button type="button" data-action="backup">Backup</button>
+        <button type="button" data-action="verify">Verify</button>
+        <button type="button" data-action="restore">Restore</button>
+        <button type="button" data-action="export">Export</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
