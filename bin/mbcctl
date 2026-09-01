@@ -2,7 +2,8 @@
 """Modular Backup Center command-line backend.
 
 The Cockpit UI talks to this executable and consumes JSON output.
-The first MVP implements read-only module discovery only.
+The MVP discovers modules automatically and adds safe, read-only verification
+of existing backups before backup/restore actions are enabled.
 """
 
 from __future__ import annotations
@@ -48,8 +49,19 @@ def load_config() -> dict[str, Any]:
     return config
 
 
-def latest_backup(backup_root: Path, module_key: str) -> dict[str, Any] | None:
-    module_dir = backup_root / module_key
+def module_backup_dir(backup_root: Path, module_key: str) -> Path:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", module_key):
+        raise ValueError("Invalid module key")
+
+    root = backup_root.resolve()
+    module_dir = (root / module_key).resolve()
+    if module_dir.parent != root:
+        raise ValueError("Module path escapes backup root")
+    return module_dir
+
+
+def latest_backup_path(backup_root: Path, module_key: str) -> Path | None:
+    module_dir = module_backup_dir(backup_root, module_key)
     if not module_dir.is_dir():
         return None
 
@@ -57,7 +69,14 @@ def latest_backup(backup_root: Path, module_key: str) -> dict[str, Any] | None:
     if not candidates:
         return None
 
-    latest = max(candidates, key=lambda item: item.stat().st_mtime)
+    return max(candidates, key=lambda item: item.stat().st_mtime)
+
+
+def latest_backup(backup_root: Path, module_key: str) -> dict[str, Any] | None:
+    latest = latest_backup_path(backup_root, module_key)
+    if latest is None:
+        return None
+
     stat = latest.stat()
 
     size = 0
@@ -79,6 +98,70 @@ def latest_backup(backup_root: Path, module_key: str) -> dict[str, Any] | None:
         "size_bytes": size,
         "integrity": integrity,
     }
+
+
+def verify_latest(module_key: str) -> tuple[dict[str, Any], int]:
+    config = load_config()
+    backup_root = Path(config["backup_root"])
+
+    try:
+        latest = latest_backup_path(backup_root, module_key)
+    except ValueError as exc:
+        return {"ok": False, "module": module_key, "error": str(exc)}, 2
+
+    if latest is None:
+        return {"ok": False, "module": module_key, "error": "No backup found"}, 3
+
+    checksum_file = latest / "SHA256SUMS"
+    if not checksum_file.is_file():
+        return {
+            "ok": False,
+            "module": module_key,
+            "backup": latest.name,
+            "error": "SHA256SUMS not found",
+        }, 4
+
+    try:
+        entries = sum(
+            1
+            for line in checksum_file.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+        )
+    except OSError as exc:
+        return {
+            "ok": False,
+            "module": module_key,
+            "backup": latest.name,
+            "error": str(exc),
+        }, 5
+
+    result = subprocess.run(
+        ["sha256sum", "--check", "--strict", "SHA256SUMS"],
+        cwd=latest,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    failed_lines = [
+        line.strip()
+        for line in (result.stdout + "\n" + result.stderr).splitlines()
+        if "FAILED" in line or "WARNING" in line
+    ]
+
+    payload: dict[str, Any] = {
+        "ok": result.returncode == 0,
+        "module": module_key,
+        "backup": latest.name,
+        "checked_files": entries,
+    }
+
+    if result.returncode != 0:
+        payload["error"] = "Checksum verification failed"
+        payload["details"] = failed_lines[:20]
+
+    return payload, 0 if result.returncode == 0 else 6
 
 
 def docker_records() -> list[dict[str, Any]]:
@@ -238,6 +321,7 @@ def usage() -> dict[str, Any]:
         "app": APP_NAME,
         "commands": {
             "discover": "Discover SYSTEM and Docker modules (read-only)",
+            "verify <backup-key>": "Verify SHA256 checksums of the latest backup (read-only)",
         },
     }
 
@@ -252,6 +336,14 @@ def main() -> int:
     if command == "discover":
         print(json.dumps(discover(), indent=2, sort_keys=False))
         return 0
+
+    if command == "verify":
+        if len(sys.argv) != 3:
+            print(json.dumps({"ok": False, "error": "Usage: mbcctl verify <backup-key>"}))
+            return 2
+        payload, exit_code = verify_latest(sys.argv[2])
+        print(json.dumps(payload, indent=2, sort_keys=False))
+        return exit_code
 
     print(json.dumps({"error": f"Unknown command: {command}"}))
     return 2
