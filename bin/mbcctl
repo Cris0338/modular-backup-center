@@ -2,8 +2,9 @@
 """Modular Backup Center command-line backend.
 
 The Cockpit UI talks to this executable and consumes JSON output.
-The MVP discovers modules automatically and adds safe, read-only verification
-of existing backups before backup/restore actions are enabled.
+Modules are discovered automatically. Known adapters can delegate backup work
+to an existing, application-aware backup command and MBC verifies the resulting
+backup before reporting success.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
@@ -21,6 +23,16 @@ from typing import Any
 APP_NAME = "modular-backup-center"
 DEFAULT_CONFIG = Path("/etc/modular-backup-center/config.json")
 DEFAULT_BACKUP_ROOT = Path("/var/lib/modular-backup-center/backups")
+
+# Compatibility bridge for installations that already have proven backup
+# scripts. Public installations can override these through backup_commands in
+# config.json. MBC never invokes a shell: commands are executed as argv lists.
+LEGACY_BACKUP_COMMANDS: dict[str, list[str]] = {
+    "system": ["/usr/local/sbin/ia-backup-system"],
+    "ia-agent": ["/usr/local/sbin/ia-backup-ia-agent"],
+    "openclaw": ["/usr/local/sbin/ia-backup-openclaw"],
+    "portainer": ["/usr/local/sbin/ia-backup-portainer"],
+}
 
 
 def run(*args: str) -> str:
@@ -38,6 +50,7 @@ def load_config() -> dict[str, Any]:
     config_path = Path(os.environ.get("MBC_CONFIG", DEFAULT_CONFIG))
     config: dict[str, Any] = {
         "backup_root": str(DEFAULT_BACKUP_ROOT),
+        "backup_commands": {},
     }
 
     if config_path.is_file():
@@ -47,6 +60,34 @@ def load_config() -> dict[str, Any]:
             config.update(loaded)
 
     return config
+
+
+def command_available(command: list[str]) -> bool:
+    if not command:
+        return False
+    executable = command[0]
+    if "/" in executable:
+        return Path(executable).is_file() and os.access(executable, os.X_OK)
+    return shutil.which(executable) is not None
+
+
+def resolve_backup_command(adapter: str, config: dict[str, Any]) -> list[str] | None:
+    configured = config.get("backup_commands")
+    if isinstance(configured, dict):
+        raw = configured.get(adapter)
+        if isinstance(raw, str) and raw:
+            command = [raw]
+            if command_available(command):
+                return command
+        if isinstance(raw, list) and raw and all(isinstance(item, str) and item for item in raw):
+            command = list(raw)
+            if command_available(command):
+                return command
+
+    legacy = LEGACY_BACKUP_COMMANDS.get(adapter)
+    if legacy and command_available(legacy):
+        return legacy
+    return None
 
 
 def module_backup_dir(backup_root: Path, module_key: str) -> Path:
@@ -78,7 +119,6 @@ def latest_backup(backup_root: Path, module_key: str) -> dict[str, Any] | None:
         return None
 
     stat = latest.stat()
-
     size = 0
     for root, _, files in os.walk(latest):
         for filename in files:
@@ -167,12 +207,10 @@ def verify_latest(module_key: str) -> tuple[dict[str, Any], int]:
 def docker_records() -> list[dict[str, Any]]:
     output = run("docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}")
     records: list[dict[str, Any]] = []
-
     for line in output.splitlines():
         line = line.strip()
         if line:
             records.append(json.loads(line))
-
     return records
 
 
@@ -191,27 +229,26 @@ def identify_module(
     module_type: str,
     containers: list[dict[str, Any]],
 ) -> tuple[str, str, str]:
-    """Return display name, backup key and adapter name.
-
-    Generic modules need no hand-written configuration. Known applications can
-    opt into a small adapter that provides a stable friendly identity and later
-    application-aware backup/restore behaviour.
-    """
+    """Return display name, backup key and adapter name."""
     images = {str(item.get("image") or "").lower() for item in containers}
 
     if any(image.startswith("ghcr.io/openclaw/openclaw") for image in images):
         return "OpenClaw", "openclaw", "openclaw"
-
     if any(image.startswith("portainer/portainer-ce") for image in images):
         return "Portainer", "portainer", "portainer"
-
     if module_type == "compose" and raw_name.lower() == "ia-agent":
         return "IA-Agent", "ia-agent", "ia-agent"
-
     return raw_name, slug(raw_name), "generic"
 
 
-def discover_docker_modules(backup_root: Path) -> list[dict[str, Any]]:
+def capabilities_for(adapter: str, config: dict[str, Any]) -> list[str]:
+    capabilities = ["verify", "restore", "export"]
+    if resolve_backup_command(adapter, config):
+        capabilities.insert(0, "backup")
+    return capabilities
+
+
+def discover_docker_modules(backup_root: Path, config: dict[str, Any]) -> list[dict[str, Any]]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     for record in docker_records():
@@ -249,7 +286,6 @@ def discover_docker_modules(backup_root: Path) -> list[dict[str, Any]]:
     for key, containers in sorted(groups.items(), key=lambda pair: pair[0].lower()):
         running = sum(1 for container in containers if container["state"] == "running")
         total = len(containers)
-
         if running == total:
             status = "running"
         elif running == 0:
@@ -274,7 +310,7 @@ def discover_docker_modules(backup_root: Path) -> list[dict[str, Any]]:
                 "container_names": [container["name"] for container in containers],
                 "images": sorted({container["image"] for container in containers if container["image"]}),
                 "last_backup": latest_backup(backup_root, backup_key),
-                "capabilities": ["backup", "verify", "restore", "export"],
+                "capabilities": capabilities_for(adapter, config),
             }
         )
 
@@ -297,11 +333,11 @@ def discover() -> dict[str, Any]:
         "container_names": [],
         "images": [],
         "last_backup": latest_backup(backup_root, "system"),
-        "capabilities": ["backup", "verify", "restore", "export"],
+        "capabilities": capabilities_for("system", config),
     }
 
     try:
-        docker_modules = discover_docker_modules(backup_root)
+        docker_modules = discover_docker_modules(backup_root, config)
         docker_error = None
     except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
         docker_modules = []
@@ -316,12 +352,91 @@ def discover() -> dict[str, Any]:
     }
 
 
+def find_module(module_key: str) -> dict[str, Any] | None:
+    try:
+        module_backup_dir(Path(load_config()["backup_root"]), module_key)
+    except ValueError:
+        return None
+    return next((module for module in discover()["modules"] if module["backup_key"] == module_key), None)
+
+
+def tail_output(*chunks: str, limit: int = 20) -> list[str]:
+    lines: list[str] = []
+    for chunk in chunks:
+        lines.extend(line.strip() for line in chunk.splitlines() if line.strip())
+    return lines[-limit:]
+
+
+def backup_module(module_key: str) -> tuple[dict[str, Any], int]:
+    config = load_config()
+    backup_root = Path(config["backup_root"])
+    module = find_module(module_key)
+    if module is None:
+        return {"ok": False, "module": module_key, "error": "Module not found"}, 3
+
+    command = resolve_backup_command(str(module.get("adapter") or "generic"), config)
+    if command is None:
+        return {
+            "ok": False,
+            "module": module_key,
+            "error": "No backup adapter is configured for this module",
+        }, 4
+
+    before = latest_backup_path(backup_root, module_key)
+    before_name = before.name if before else None
+
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return {
+            "ok": False,
+            "module": module_key,
+            "error": "Backup command failed",
+            "details": tail_output(result.stdout, result.stderr),
+        }, 5
+
+    after = latest_backup_path(backup_root, module_key)
+    if after is None or after.name == before_name:
+        return {
+            "ok": False,
+            "module": module_key,
+            "error": "Backup command completed but no new backup was detected",
+            "details": tail_output(result.stdout, result.stderr),
+        }, 6
+
+    verification, verify_code = verify_latest(module_key)
+    backup_info = latest_backup(backup_root, module_key)
+    if verify_code != 0 or not verification.get("ok"):
+        return {
+            "ok": False,
+            "module": module_key,
+            "backup": after.name,
+            "backup_created": True,
+            "error": "Backup was created but verification failed",
+            "verification": verification,
+        }, 7
+
+    return {
+        "ok": True,
+        "module": module_key,
+        "backup": after.name,
+        "last_backup": backup_info,
+        "checked_files": verification.get("checked_files", 0),
+    }, 0
+
+
 def usage() -> dict[str, Any]:
     return {
         "app": APP_NAME,
         "commands": {
             "discover": "Discover SYSTEM and Docker modules (read-only)",
             "verify <backup-key>": "Verify SHA256 checksums of the latest backup (read-only)",
+            "backup <backup-key>": "Create and verify a new backup using the module adapter",
         },
     }
 
@@ -332,16 +447,21 @@ def main() -> int:
     if command in {"-h", "--help", "help"}:
         print(json.dumps(usage(), indent=2))
         return 0
-
     if command == "discover":
         print(json.dumps(discover(), indent=2, sort_keys=False))
         return 0
-
     if command == "verify":
         if len(sys.argv) != 3:
             print(json.dumps({"ok": False, "error": "Usage: mbcctl verify <backup-key>"}))
             return 2
         payload, exit_code = verify_latest(sys.argv[2])
+        print(json.dumps(payload, indent=2, sort_keys=False))
+        return exit_code
+    if command == "backup":
+        if len(sys.argv) != 3:
+            print(json.dumps({"ok": False, "error": "Usage: mbcctl backup <backup-key>"}))
+            return 2
+        payload, exit_code = backup_module(sys.argv[2])
         print(json.dumps(payload, indent=2, sort_keys=False))
         return exit_code
 
