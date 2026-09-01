@@ -384,9 +384,15 @@ def backup_module(module_key: str) -> tuple[dict[str, Any], int]:
 
     before = latest_backup_path(backup_root, module_key)
     before_name = before.name if before else None
+    env = os.environ.copy()
+    env["MBC_BACKUP_ROOT"] = str(backup_root)
+    backup_user = config.get("backup_user")
+    if isinstance(backup_user, str) and backup_user:
+        env["MBC_USER"] = backup_user
 
     result = subprocess.run(
         command,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
