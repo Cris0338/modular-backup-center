@@ -4,7 +4,7 @@ set -euo pipefail
 
 
 
-IA_USER="${OPENCLAW_USER:-${SUDO_USER:-}}"
+IA_USER="${OPENCLAW_USER:-${MBC_USER:-${SUDO_USER:-}}}"
 
 
 
@@ -39,6 +39,10 @@ ROOT="${OPENCLAW_BACKUP_ROOT:-${BACKUP_ROOT}/openclaw}"
 
 
 GATEWAY="${OPENCLAW_GATEWAY:-src-openclaw-gateway-1}"
+IMAGE_ID=""
+IMAGE_REPODIGEST=""
+IMAGE_ID="$(docker inspect -f '{{.Image}}' "$GATEWAY")"
+IMAGE_REPODIGEST="$(docker image inspect "$IMAGE_ID" --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}')"
 
 GATEWAY_WAS_RUNNING=0
 
@@ -188,7 +192,7 @@ docker compose -f "$SRC/docker-compose.yml" config > "$PARTIAL/metadata/compose-
 
 docker inspect "$GATEWAY" > "$PARTIAL/metadata/docker-inspect.json"
 
-docker image inspect ghcr.io/openclaw/openclaw:latest > "$PARTIAL/metadata/docker-image-inspect.json"
+docker image inspect "$IMAGE_ID" > "$PARTIAL/metadata/docker-image-inspect.json"
 
 
 
@@ -236,7 +240,7 @@ docker image inspect ghcr.io/openclaw/openclaw:latest > "$PARTIAL/metadata/docke
 
     echo "Docker image:"
 
-    docker image inspect ghcr.io/openclaw/openclaw:latest --format '{{.Id}} {{index .RepoDigests 0}}'
+    echo "$IMAGE_ID $IMAGE_REPODIGEST"
 
 } > "$PARTIAL/metadata/manifest.txt"
 
@@ -244,7 +248,7 @@ docker image inspect ghcr.io/openclaw/openclaw:latest > "$PARTIAL/metadata/docke
 
 echo "[5/6] Saving exact Docker image..."
 
-docker save ghcr.io/openclaw/openclaw:latest -o "$PARTIAL/image/openclaw-image.tar"
+docker save "$IMAGE_ID" -o "$PARTIAL/image/openclaw-image.tar"
 
 gzip -1 "$PARTIAL/image/openclaw-image.tar"
 
