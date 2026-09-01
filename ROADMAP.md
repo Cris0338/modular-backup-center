@@ -25,6 +25,25 @@ This roadmap describes the intended evolution of Modular Backup Center. Prioriti
 - Build isolated restore-test mode so recovery can be validated without touching production data.
 - Document bare-metal SYSTEM recovery from a live/rescue environment.
 
+### OpenClaw recovery milestone — validated 2026-09-01
+
+OpenClaw is the first module validated end-to-end through the Cockpit UI:
+
+- Backup creation and SHA256 verification.
+- Exact running Docker image captured by image ID and stored for offline recovery.
+- Backup history exposed by the MBC backend.
+- Restore precheck validates checksums, manifest, deployment metadata and image identity.
+- Explicit `RESTORE` confirmation required before destructive recovery.
+- Automatic pre-restore safety snapshot.
+- Restore of OpenClaw state, authentication/profile secrets and Compose deployment files.
+- Exact Docker image loaded and retagged without pulling or rebuilding.
+- Recovery can recreate missing OpenClaw state/deployment directories.
+- Automatic rollback attempted if a restore fails after the safety snapshot is ready.
+- Gateway restarted with `docker compose up --no-build` and verified by health check.
+- Full restore successfully exercised from the Cockpit dashboard with final status `healthy`.
+
+The remaining Phase 2 work is to extend the validated recovery pattern to the other modules, add isolated restore testing, and document SYSTEM bare-metal recovery.
+
 ## Phase 3 — Export / Import
 
 - Export backups without deleting the local copy.
