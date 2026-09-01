@@ -62,7 +62,8 @@ h1 {
 }
 
 .secondary-button,
-.card-actions button {
+.card-actions button,
+.modal-x {
   border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
   background: color-mix(in srgb, Canvas 92%, CanvasText 8%);
   color: CanvasText;
@@ -72,7 +73,8 @@ h1 {
 }
 
 .secondary-button:hover,
-.card-actions button:hover {
+.card-actions button:hover,
+.modal-x:hover {
   background: color-mix(in srgb, Canvas 84%, CanvasText 16%);
 }
 
@@ -208,6 +210,74 @@ h1 {
 
 .card-actions button[data-action="restore"] {
   border-color: color-mix(in srgb, #c9190b 55%, transparent);
+}
+
+.action-modal {
+  width: min(560px, calc(100vw - 32px));
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 12px;
+  padding: 0;
+  background: Canvas;
+  color: CanvasText;
+  box-shadow: 0 18px 60px rgb(0 0 0 / 0.35);
+}
+
+.action-modal::backdrop {
+  background: rgb(0 0 0 / 0.58);
+  backdrop-filter: blur(2px);
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 20px 12px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+}
+
+.modal-header h2 {
+  margin: 2px 0 0;
+  font-size: 1.3rem;
+}
+
+.modal-kicker {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  opacity: 0.62;
+}
+
+.modal-x {
+  min-width: 38px;
+  padding: 5px 9px;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.modal-body {
+  padding: 20px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 20px 20px;
+}
+
+.action-modal[data-kind="success"] {
+  border-color: color-mix(in srgb, #3e8635 55%, transparent);
+}
+
+.action-modal[data-kind="error"] {
+  border-color: color-mix(in srgb, #c9190b 65%, transparent);
+}
+
+.action-modal[data-kind="warning"] {
+  border-color: color-mix(in srgb, #f0ab00 65%, transparent);
 }
 
 @media (max-width: 720px) {
