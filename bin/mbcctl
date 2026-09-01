@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -81,8 +82,7 @@ def latest_backup(backup_root: Path, module_key: str) -> dict[str, Any] | None:
 
 
 def docker_records() -> list[dict[str, Any]]:
-    format_string = "{{json .}}"
-    output = run("docker", "ps", "-a", "--no-trunc", "--format", format_string)
+    output = run("docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}")
     records: list[dict[str, Any]] = []
 
     for line in output.splitlines():
@@ -96,6 +96,36 @@ def docker_records() -> list[dict[str, Any]]:
 def inspect_container(container_id: str) -> dict[str, Any]:
     payload = json.loads(run("docker", "inspect", container_id))
     return payload[0]
+
+
+def slug(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9._-]+", "-", value.lower()).strip("-._")
+    return cleaned or "module"
+
+
+def identify_module(
+    raw_name: str,
+    module_type: str,
+    containers: list[dict[str, Any]],
+) -> tuple[str, str, str]:
+    """Return display name, backup key and adapter name.
+
+    Generic modules need no hand-written configuration. Known applications can
+    opt into a small adapter that provides a stable friendly identity and later
+    application-aware backup/restore behaviour.
+    """
+    images = {str(item.get("image") or "").lower() for item in containers}
+
+    if any(image.startswith("ghcr.io/openclaw/openclaw") for image in images):
+        return "OpenClaw", "openclaw", "openclaw"
+
+    if any(image.startswith("portainer/portainer-ce") for image in images):
+        return "Portainer", "portainer", "portainer"
+
+    if module_type == "compose" and raw_name.lower() == "ia-agent":
+        return "IA-Agent", "ia-agent", "ia-agent"
+
+    return raw_name, slug(raw_name), "generic"
 
 
 def discover_docker_modules(backup_root: Path) -> list[dict[str, Any]]:
@@ -113,11 +143,11 @@ def discover_docker_modules(backup_root: Path) -> list[dict[str, Any]]:
 
         if compose_project:
             key = f"compose:{compose_project}"
-            display_name = compose_project
+            raw_module_name = compose_project
             module_type = "compose"
         else:
             key = f"container:{name}"
-            display_name = name
+            raw_module_name = name
             module_type = "container"
 
         groups[key].append(
@@ -127,7 +157,7 @@ def discover_docker_modules(backup_root: Path) -> list[dict[str, Any]]:
                 "image": info.get("Config", {}).get("Image"),
                 "state": info.get("State", {}).get("Status", "unknown"),
                 "labels": labels,
-                "module_display_name": display_name,
+                "raw_module_name": raw_module_name,
                 "module_type": module_type,
             }
         )
@@ -144,9 +174,9 @@ def discover_docker_modules(backup_root: Path) -> list[dict[str, Any]]:
         else:
             status = "partial"
 
-        display_name = containers[0]["module_display_name"]
+        raw_name = containers[0]["raw_module_name"]
         module_type = containers[0]["module_type"]
-        backup_key = key.replace(":", "-")
+        display_name, backup_key, adapter = identify_module(raw_name, module_type, containers)
 
         modules.append(
             {
@@ -154,6 +184,7 @@ def discover_docker_modules(backup_root: Path) -> list[dict[str, Any]]:
                 "backup_key": backup_key,
                 "name": display_name,
                 "type": module_type,
+                "adapter": adapter,
                 "status": status,
                 "containers": total,
                 "running_containers": running,
@@ -176,6 +207,7 @@ def discover() -> dict[str, Any]:
         "backup_key": "system",
         "name": "SYSTEM",
         "type": "system",
+        "adapter": "system",
         "status": "running",
         "containers": 0,
         "running_containers": 0,
@@ -201,8 +233,21 @@ def discover() -> dict[str, Any]:
     }
 
 
+def usage() -> dict[str, Any]:
+    return {
+        "app": APP_NAME,
+        "commands": {
+            "discover": "Discover SYSTEM and Docker modules (read-only)",
+        },
+    }
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "discover"
+
+    if command in {"-h", "--help", "help"}:
+        print(json.dumps(usage(), indent=2))
+        return 0
 
     if command == "discover":
         print(json.dumps(discover(), indent=2, sort_keys=False))
