@@ -82,9 +82,7 @@
         { superuser: "try", err: "message" }
       );
       const result = JSON.parse(output);
-      if (!result.ok) {
-        throw new Error(result.error || "Verification failed");
-      }
+      if (!result.ok) throw new Error(result.error || "Verification failed");
       showActionModal({
         title: "Backup verified",
         kicker: module.name,
@@ -94,6 +92,48 @@
     } catch (error) {
       showActionModal({
         title: "Verification failed",
+        kicker: module.name,
+        kind: "error",
+        message: String(error),
+      });
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+
+  async function backupModule(module, button) {
+    clearNotice();
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "Backing up…";
+
+    showActionModal({
+      title: "Backup in progress",
+      kicker: module.name,
+      kind: "info",
+      message: "Creating a new backup and verifying its checksums. The module may be briefly stopped while its data is captured.",
+    });
+
+    try {
+      const output = await cockpit.spawn(
+        ["/usr/local/lib/modular-backup-center/mbcctl", "backup", module.backup_key],
+        { superuser: "require", err: "message" }
+      );
+      const result = JSON.parse(output);
+      if (!result.ok) throw new Error(result.error || "Backup failed");
+
+      const backup = result.last_backup || {};
+      showActionModal({
+        title: "Backup completed",
+        kicker: module.name,
+        kind: "success",
+        message: `${result.backup} created and verified successfully. ${humanSize(backup.size_bytes)} · ${result.checked_files} checksum entries checked.`,
+      });
+      await refresh();
+    } catch (error) {
+      showActionModal({
+        title: "Backup failed",
         kicker: module.name,
         kind: "error",
         message: String(error),
@@ -130,7 +170,18 @@
 
     fragment.querySelectorAll("[data-action]").forEach((button) => {
       const action = button.dataset.action;
+      const available = (module.capabilities || []).includes(action);
+      if (!available) {
+        button.disabled = true;
+        button.title = `${action} is not available for this module yet`;
+      }
+
       button.addEventListener("click", () => {
+        if (!available) return;
+        if (action === "backup") {
+          backupModule(module, button);
+          return;
+        }
         if (action === "verify") {
           verifyModule(module, button);
           return;
@@ -150,13 +201,10 @@
   function render(payload) {
     moduleGrid.replaceChildren();
     const modules = payload.modules || [];
-
     modules.forEach((module) => moduleGrid.appendChild(renderModule(module)));
-
     moduleCount.textContent = String(modules.length);
     runningCount.textContent = String(modules.filter((module) => module.status === "running").length);
     backupRoot.textContent = payload.backup_root || "—";
-
     if (payload.docker_error) {
       showNotice(`Docker discovery warning: ${payload.docker_error}`, "warning");
     }
