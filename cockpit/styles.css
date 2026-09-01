@@ -1,0 +1,233 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: Canvas;
+  color: CanvasText;
+}
+
+button {
+  font: inherit;
+}
+
+.page-shell {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+.eyebrow,
+.module-type,
+.meta-label,
+.summary-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  opacity: 0.68;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 4px;
+  font-size: clamp(1.7rem, 3vw, 2.5rem);
+}
+
+.subtitle {
+  margin-bottom: 0;
+  opacity: 0.72;
+}
+
+.secondary-button,
+.card-actions button {
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  background: color-mix(in srgb, Canvas 92%, CanvasText 8%);
+  color: CanvasText;
+  border-radius: 7px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.secondary-button:hover,
+.card-actions button:hover {
+  background: color-mix(in srgb, Canvas 84%, CanvasText 16%);
+}
+
+.secondary-button:disabled,
+.card-actions button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.notice {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  background: color-mix(in srgb, Canvas 92%, CanvasText 8%);
+}
+
+.notice[data-kind="error"] {
+  border-color: #c9190b;
+}
+
+.notice[data-kind="warning"] {
+  border-color: #f0ab00;
+}
+
+.summary-bar {
+  display: grid;
+  grid-template-columns: minmax(100px, auto) minmax(100px, auto) minmax(260px, 1fr);
+  gap: 1px;
+  overflow: hidden;
+  margin-bottom: 20px;
+  border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, CanvasText 14%, transparent);
+}
+
+.summary-bar > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  background: Canvas;
+  min-width: 0;
+}
+
+.summary-bar strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(285px, 1fr));
+  gap: 16px;
+}
+
+.module-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 250px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, Canvas 97%, CanvasText 3%);
+  box-shadow: 0 1px 2px color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+.system-card {
+  grid-column: 1 / -1;
+  min-height: auto;
+}
+
+.card-topline {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.module-name {
+  margin: 4px 0 0;
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.status-pill {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: color-mix(in srgb, Canvas 85%, CanvasText 15%);
+}
+
+.status-pill[data-status="running"] {
+  background: color-mix(in srgb, Canvas 84%, #3e8635 16%);
+}
+
+.status-pill[data-status="partial"] {
+  background: color-mix(in srgb, Canvas 82%, #f0ab00 18%);
+}
+
+.status-pill[data-status="stopped"] {
+  background: color-mix(in srgb, Canvas 84%, #c9190b 16%);
+}
+
+.module-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.module-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.module-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: auto;
+}
+
+.card-actions button[data-action="restore"] {
+  border-color: color-mix(in srgb, #c9190b 55%, transparent);
+}
+
+@media (max-width: 720px) {
+  .page-shell {
+    padding: 16px;
+  }
+
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .summary-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .module-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .system-card {
+    grid-column: auto;
+  }
+}
