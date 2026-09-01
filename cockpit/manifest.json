@@ -1,0 +1,13 @@
+{
+  "version": 0,
+  "requires": {
+    "cockpit": "300"
+  },
+  "tools": {
+    "modular-backup-center": {
+      "label": "Modular Backup Center",
+      "path": "index.html",
+      "order": 58
+    }
+  }
+}
