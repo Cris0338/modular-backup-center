@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Modular Backup Center command-line backend.
+
+The Cockpit UI talks to this executable and consumes JSON output.
+The first MVP implements read-only module discovery only.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+APP_NAME = "modular-backup-center"
+DEFAULT_CONFIG = Path("/etc/modular-backup-center/config.json")
+DEFAULT_BACKUP_ROOT = Path("/var/lib/modular-backup-center/backups")
+
+
+def run(*args: str) -> str:
+    result = subprocess.run(
+        args,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return result.stdout
+
+
+def load_config() -> dict[str, Any]:
+    config_path = Path(os.environ.get("MBC_CONFIG", DEFAULT_CONFIG))
+    config: dict[str, Any] = {
+        "backup_root": str(DEFAULT_BACKUP_ROOT),
+    }
+
+    if config_path.is_file():
+        with config_path.open("r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        if isinstance(loaded, dict):
+            config.update(loaded)
+
+    return config
+
+
+def latest_backup(backup_root: Path, module_key: str) -> dict[str, Any] | None:
+    module_dir = backup_root / module_key
+    if not module_dir.is_dir():
+        return None
+
+    candidates = [item for item in module_dir.iterdir() if item.is_dir() and not item.name.startswith(".")]
+    if not candidates:
+        return None
+
+    latest = max(candidates, key=lambda item: item.stat().st_mtime)
+    stat = latest.stat()
+
+    size = 0
+    for root, _, files in os.walk(latest):
+        for filename in files:
+            try:
+                size += (Path(root) / filename).stat().st_size
+            except OSError:
+                pass
+
+    integrity = "unknown"
+    checksum_file = latest / "SHA256SUMS"
+    if checksum_file.is_file():
+        integrity = "available"
+
+    return {
+        "name": latest.name,
+        "created_at": datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds"),
+        "size_bytes": size,
+        "integrity": integrity,
+    }
+
+
+def docker_records() -> list[dict[str, Any]]:
+    format_string = "{{json .}}"
+    output = run("docker", "ps", "-a", "--no-trunc", "--format", format_string)
+    records: list[dict[str, Any]] = []
+
+    for line in output.splitlines():
+        line = line.strip()
+        if line:
+            records.append(json.loads(line))
+
+    return records
+
+
+def inspect_container(container_id: str) -> dict[str, Any]:
+    payload = json.loads(run("docker", "inspect", container_id))
+    return payload[0]
+
+
+def discover_docker_modules(backup_root: Path) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for record in docker_records():
+        container_id = record.get("ID") or record.get("Names")
+        if not container_id:
+            continue
+
+        info = inspect_container(container_id)
+        labels = info.get("Config", {}).get("Labels") or {}
+        compose_project = labels.get("com.docker.compose.project")
+        name = info.get("Name", "").lstrip("/") or record.get("Names", container_id[:12])
+
+        if compose_project:
+            key = f"compose:{compose_project}"
+            display_name = compose_project
+            module_type = "compose"
+        else:
+            key = f"container:{name}"
+            display_name = name
+            module_type = "container"
+
+        groups[key].append(
+            {
+                "id": info.get("Id"),
+                "name": name,
+                "image": info.get("Config", {}).get("Image"),
+                "state": info.get("State", {}).get("Status", "unknown"),
+                "labels": labels,
+                "module_display_name": display_name,
+                "module_type": module_type,
+            }
+        )
+
+    modules: list[dict[str, Any]] = []
+    for key, containers in sorted(groups.items(), key=lambda pair: pair[0].lower()):
+        running = sum(1 for container in containers if container["state"] == "running")
+        total = len(containers)
+
+        if running == total:
+            status = "running"
+        elif running == 0:
+            status = "stopped"
+        else:
+            status = "partial"
+
+        display_name = containers[0]["module_display_name"]
+        module_type = containers[0]["module_type"]
+        backup_key = key.replace(":", "-")
+
+        modules.append(
+            {
+                "id": f"docker:{key}",
+                "backup_key": backup_key,
+                "name": display_name,
+                "type": module_type,
+                "status": status,
+                "containers": total,
+                "running_containers": running,
+                "container_names": [container["name"] for container in containers],
+                "images": sorted({container["image"] for container in containers if container["image"]}),
+                "last_backup": latest_backup(backup_root, backup_key),
+                "capabilities": ["backup", "verify", "restore", "export"],
+            }
+        )
+
+    return modules
+
+
+def discover() -> dict[str, Any]:
+    config = load_config()
+    backup_root = Path(config["backup_root"])
+
+    system_module = {
+        "id": "system",
+        "backup_key": "system",
+        "name": "SYSTEM",
+        "type": "system",
+        "status": "running",
+        "containers": 0,
+        "running_containers": 0,
+        "container_names": [],
+        "images": [],
+        "last_backup": latest_backup(backup_root, "system"),
+        "capabilities": ["backup", "verify", "restore", "export"],
+    }
+
+    try:
+        docker_modules = discover_docker_modules(backup_root)
+        docker_error = None
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        docker_modules = []
+        docker_error = str(exc)
+
+    return {
+        "app": APP_NAME,
+        "version": "0.1.0-dev",
+        "backup_root": str(backup_root),
+        "modules": [system_module, *docker_modules],
+        "docker_error": docker_error,
+    }
+
+
+def main() -> int:
+    command = sys.argv[1] if len(sys.argv) > 1 else "discover"
+
+    if command == "discover":
+        print(json.dumps(discover(), indent=2, sort_keys=False))
+        return 0
+
+    print(json.dumps({"error": f"Unknown command: {command}"}))
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
