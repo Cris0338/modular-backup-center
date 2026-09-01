@@ -8,6 +8,12 @@
   const moduleCount = document.getElementById("module-count");
   const runningCount = document.getElementById("running-count");
   const backupRoot = document.getElementById("backup-root");
+  const actionModal = document.getElementById("action-modal");
+  const actionModalKicker = document.getElementById("action-modal-kicker");
+  const actionModalTitle = document.getElementById("action-modal-title");
+  const actionModalBody = document.getElementById("action-modal-body");
+  const actionModalClose = document.getElementById("action-modal-close");
+  const actionModalX = document.getElementById("action-modal-x");
 
   function humanSize(bytes) {
     if (!Number.isFinite(bytes) || bytes <= 0) return "—";
@@ -44,6 +50,18 @@
     delete notice.dataset.kind;
   }
 
+  function showActionModal({ title, message, kind = "info", kicker = "Modular Backup Center" }) {
+    actionModalKicker.textContent = kicker;
+    actionModalTitle.textContent = title;
+    actionModalBody.textContent = message;
+    actionModal.dataset.kind = kind;
+    if (!actionModal.open) actionModal.showModal();
+  }
+
+  function closeActionModal() {
+    if (actionModal.open) actionModal.close();
+  }
+
   function statusText(module) {
     if (module.type === "system") return "Online";
     if (module.status === "running") return "Running";
@@ -67,12 +85,19 @@
       if (!result.ok) {
         throw new Error(result.error || "Verification failed");
       }
-      showNotice(
-        `${module.name}: ${result.backup} verified successfully (${result.checked_files} checksum entries).`,
-        "success"
-      );
+      showActionModal({
+        title: "Backup verified",
+        kicker: module.name,
+        kind: "success",
+        message: `${result.backup} verified successfully. ${result.checked_files} checksum entries checked.`,
+      });
     } catch (error) {
-      showNotice(`${module.name}: verification failed — ${error}`, "error");
+      showActionModal({
+        title: "Verification failed",
+        kicker: module.name,
+        kind: "error",
+        message: String(error),
+      });
     } finally {
       button.disabled = false;
       button.textContent = originalText;
@@ -110,10 +135,12 @@
           verifyModule(module, button);
           return;
         }
-        showNotice(
-          `${action[0].toUpperCase()}${action.slice(1)} for ${module.name} is not wired yet.`,
-          "info"
-        );
+        showActionModal({
+          title: `${action[0].toUpperCase()}${action.slice(1)}`,
+          kicker: module.name,
+          kind: "info",
+          message: "This action is not wired yet.",
+        });
       });
     });
 
@@ -154,6 +181,11 @@
     }
   }
 
+  actionModalClose.addEventListener("click", closeActionModal);
+  actionModalX.addEventListener("click", closeActionModal);
+  actionModal.addEventListener("click", (event) => {
+    if (event.target === actionModal) closeActionModal();
+  });
   refreshButton.addEventListener("click", refresh);
   refresh();
 })();
