@@ -13,7 +13,9 @@ body {
   color: CanvasText;
 }
 
-button {
+button,
+select,
+input {
   font: inherit;
 }
 
@@ -34,7 +36,8 @@ button {
 .eyebrow,
 .module-type,
 .meta-label,
-.summary-label {
+.summary-label,
+.field-label {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: 0.72rem;
@@ -63,7 +66,8 @@ h1 {
 
 .secondary-button,
 .card-actions button,
-.modal-x {
+.modal-x,
+.danger-button {
   border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
   background: color-mix(in srgb, Canvas 92%, CanvasText 8%);
   color: CanvasText;
@@ -78,8 +82,19 @@ h1 {
   background: color-mix(in srgb, Canvas 84%, CanvasText 16%);
 }
 
+.danger-button {
+  border-color: color-mix(in srgb, #c9190b 72%, transparent);
+  background: color-mix(in srgb, Canvas 86%, #c9190b 14%);
+}
+
+.danger-button:hover {
+  background: color-mix(in srgb, Canvas 78%, #c9190b 22%);
+}
+
 .secondary-button:disabled,
-.card-actions button:disabled {
+.card-actions button:disabled,
+.danger-button:disabled,
+.modal-x:disabled {
   opacity: 0.55;
   cursor: progress;
 }
@@ -213,7 +228,7 @@ h1 {
 }
 
 .action-modal {
-  width: min(560px, calc(100vw - 32px));
+  width: min(620px, calc(100vw - 32px));
   border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
   border-radius: 12px;
   padding: 0;
@@ -265,7 +280,49 @@ h1 {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   padding: 0 20px 20px;
+}
+
+.restore-form {
+  display: grid;
+  gap: 14px;
+}
+
+.restore-field {
+  display: grid;
+  gap: 6px;
+}
+
+.restore-field select,
+.restore-field input {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+.restore-warning {
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 4px solid #c9190b;
+  border-radius: 6px;
+  background: color-mix(in srgb, Canvas 90%, #c9190b 10%);
+}
+
+.restore-summary {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 7px;
+  background: color-mix(in srgb, Canvas 93%, CanvasText 7%);
+}
+
+.restore-summary code {
+  overflow-wrap: anywhere;
 }
 
 .action-modal[data-kind="success"] {
