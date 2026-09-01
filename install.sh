@@ -28,6 +28,15 @@ install -m 0644 "$ROOT_DIR/cockpit/index.html" "$COCKPIT_DIR/index.html"
 install -m 0644 "$ROOT_DIR/cockpit/app.js" "$COCKPIT_DIR/app.js"
 install -m 0644 "$ROOT_DIR/cockpit/styles.css" "$COCKPIT_DIR/styles.css"
 
+# Application-aware adapters remain separate privileged executables so the
+# Cockpit backend can discover capabilities without embedding recovery logic.
+if [ -f "$ROOT_DIR/adapters/openclaw/backup.sh" ]; then
+    install -o root -g root -m 0750 "$ROOT_DIR/adapters/openclaw/backup.sh" /usr/local/sbin/ia-backup-openclaw
+fi
+if [ -f "$ROOT_DIR/adapters/openclaw/restore.sh" ]; then
+    install -o root -g root -m 0755 "$ROOT_DIR/adapters/openclaw/restore.sh" /usr/local/sbin/ia-restore-openclaw
+fi
+
 # The config contains paths and non-secret settings only. Keep it readable by
 # the Cockpit session user; secrets must never be stored here.
 if [ ! -f "$CONFIG_FILE" ]; then
