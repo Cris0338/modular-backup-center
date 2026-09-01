@@ -97,11 +97,6 @@ if ! getent passwd "$IA_USER" >/dev/null; then
     exit 4
 fi
 
-if [ ! -d "$SRC" ]; then
-    echo "ERROR: OpenClaw source/deployment directory does not exist: $SRC"
-    exit 4
-fi
-
 if ! command -v docker >/dev/null 2>&1; then
     echo "ERROR: docker is not available"
     exit 4
@@ -109,6 +104,11 @@ fi
 
 if ! command -v rsync >/dev/null 2>&1; then
     echo "ERROR: rsync is not available"
+    exit 4
+fi
+
+if ! command -v gzip >/dev/null 2>&1; then
+    echo "ERROR: gzip is not available"
     exit 4
 fi
 
@@ -150,6 +150,21 @@ if docker inspect -f '{{.State.Running}}' "$GATEWAY" 2>/dev/null | grep -qx true
     GATEWAY_WAS_RUNNING=1
 fi
 
+restore_tree_from_safety() {
+    local source_dir="$1"
+    local target_dir="$2"
+    local missing_marker="$3"
+    local mode="$4"
+
+    if [ -f "$missing_marker" ]; then
+        rm -rf "$target_dir"
+        return
+    fi
+
+    install -d -m "$mode" -o "$IA_USER" -g "$IA_USER" "$target_dir"
+    rsync -aAXH --numeric-ids --delete "$source_dir/" "$target_dir/" || true
+}
+
 restore_deployment_from_safety() {
     if [ ! -d "$SAFETY_DIR/deployment" ]; then
         return
@@ -166,6 +181,10 @@ restore_deployment_from_safety() {
             [ -n "$rel" ] && rm -f "$SRC/$rel"
         done < "$SAFETY_DIR/metadata/deployment-originally-missing.txt"
     fi
+
+    if [ -f "$SAFETY_DIR/metadata/deployment-dir-originally-missing" ]; then
+        rmdir "$SRC" >/dev/null 2>&1 || true
+    fi
 }
 
 rollback_restore() {
@@ -175,12 +194,21 @@ rollback_restore() {
         docker stop "$GATEWAY" >/dev/null 2>&1 || true
     fi
 
-    install -d -m 0700 -o "$IA_USER" -g "$IA_USER" "$STATE" "$AUTH"
-    rsync -aAXH --numeric-ids --delete "$SAFETY_DIR/state/" "$STATE/" || true
-    rsync -aAXH --numeric-ids --delete "$SAFETY_DIR/auth-profile-secrets/" "$AUTH/" || true
+    restore_tree_from_safety \
+        "$SAFETY_DIR/state" \
+        "$STATE" \
+        "$SAFETY_DIR/metadata/state-originally-missing" \
+        0700
+    restore_tree_from_safety \
+        "$SAFETY_DIR/auth-profile-secrets" \
+        "$AUTH" \
+        "$SAFETY_DIR/metadata/auth-originally-missing" \
+        0700
     restore_deployment_from_safety || true
 
-    if [ -d "$SAFETY_DIR/control-center" ]; then
+    if [ -f "$SAFETY_DIR/metadata/control-originally-missing" ]; then
+        rm -rf "$CONTROL"
+    elif [ -d "$SAFETY_DIR/control-center" ]; then
         install -d -m 0755 -o "$IA_USER" -g "$IA_USER" "$CONTROL"
         rsync -aAXH --numeric-ids --delete "$SAFETY_DIR/control-center/" "$CONTROL/" || true
     fi
@@ -189,7 +217,7 @@ rollback_restore() {
         docker tag "$CURRENT_IMAGE_ID" "$CURRENT_IMAGE_REF" >/dev/null 2>&1 || true
     fi
 
-    if [ "$GATEWAY_WAS_RUNNING" -eq 1 ]; then
+    if [ "$GATEWAY_WAS_RUNNING" -eq 1 ] && [ -f "$SRC/.env" ] && [ -f "$SRC/docker-compose.yml" ]; then
         docker compose --env-file "$SRC/.env" -f "$SRC/docker-compose.yml" up -d --no-build openclaw-gateway >/dev/null 2>&1 || true
     fi
 
@@ -201,7 +229,7 @@ cleanup() {
     trap - EXIT
     if [ "$status" -ne 0 ] && [ "$SAFETY_READY" -eq 1 ] && [ "$RESTORE_COMPLETED" -ne 1 ]; then
         rollback_restore
-    elif [ "$status" -ne 0 ] && [ "$GATEWAY_WAS_RUNNING" -eq 1 ]; then
+    elif [ "$status" -ne 0 ] && [ "$GATEWAY_WAS_RUNNING" -eq 1 ] && [ -f "$SRC/.env" ] && [ -f "$SRC/docker-compose.yml" ]; then
         docker compose --env-file "$SRC/.env" -f "$SRC/docker-compose.yml" up -d --no-build openclaw-gateway >/dev/null 2>&1 || true
     fi
     exit "$status"
@@ -209,8 +237,8 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[4/11] Capturing current OpenClaw runtime metadata..."
-echo "Current image ID:  ${CURRENT_IMAGE_ID:-unknown}"
-echo "Current image ref: ${CURRENT_IMAGE_REF:-unknown}"
+echo "Current image ID:  ${CURRENT_IMAGE_ID:-not present}"
+echo "Current image ref: ${CURRENT_IMAGE_REF:-not present}"
 
 if [ "$GATEWAY_WAS_RUNNING" -eq 1 ]; then
     echo "[5/11] Stopping OpenClaw gateway for a consistent safety snapshot..."
@@ -223,8 +251,21 @@ echo "[6/11] Creating pre-restore safety snapshot..."
 install -d -m 0700 -o "$IA_USER" -g "$IA_USER" "$SAFETY_ROOT" "$SAFETY_DIR"
 mkdir -p "$SAFETY_DIR/state" "$SAFETY_DIR/auth-profile-secrets" "$SAFETY_DIR/deployment" "$SAFETY_DIR/metadata"
 
-rsync -aAXH --numeric-ids "$STATE/" "$SAFETY_DIR/state/"
-rsync -aAXH --numeric-ids "$AUTH/" "$SAFETY_DIR/auth-profile-secrets/"
+if [ -d "$STATE" ]; then
+    rsync -aAXH --numeric-ids "$STATE/" "$SAFETY_DIR/state/"
+else
+    touch "$SAFETY_DIR/metadata/state-originally-missing"
+fi
+
+if [ -d "$AUTH" ]; then
+    rsync -aAXH --numeric-ids "$AUTH/" "$SAFETY_DIR/auth-profile-secrets/"
+else
+    touch "$SAFETY_DIR/metadata/auth-originally-missing"
+fi
+
+if [ ! -d "$SRC" ]; then
+    touch "$SAFETY_DIR/metadata/deployment-dir-originally-missing"
+fi
 
 : > "$SAFETY_DIR/metadata/deployment-originally-missing.txt"
 while IFS= read -r -d '' backup_file; do
@@ -240,6 +281,8 @@ done < <(find "$BACKUP_DIR/deployment" -type f -print0)
 if [ -d "$CONTROL" ]; then
     mkdir -p "$SAFETY_DIR/control-center"
     rsync -aAXH --numeric-ids "$CONTROL/" "$SAFETY_DIR/control-center/"
+else
+    touch "$SAFETY_DIR/metadata/control-originally-missing"
 fi
 
 {
@@ -287,7 +330,7 @@ docker compose --env-file "$SRC/.env" -f "$SRC/docker-compose.yml" up -d --no-bu
 
 for _ in $(seq 1 30); do
     STATUS="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$GATEWAY" 2>/dev/null || true)"
-    if [ "$STATUS" = "healthy" ] || [ "$STATUS" = "running" ]; then
+    if [ "$STATUS" = "healthy" ]; then
         RESTORE_COMPLETED=1
         echo "[11/11] OPENCLAW RESTORE OK"
         echo "Gateway: $GATEWAY"
